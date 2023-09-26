@@ -3,7 +3,7 @@
 # - Installed RsInstrument Python module (see the attached RsInstrument_PythonModule folder Readme.txt)
 # - Installed VISA e.g. R&S Visa 5.12.x or newer
 
-from RsInstrument.RsInstrument import RsInstrument
+from RsInstrument import *
 
 resource_string_1 = 'TCPIP::192.168.2.101::INSTR'  # Standard LAN connection (also called VXI-11)
 resource_string_2 = 'TCPIP::192.168.2.101::hislip0'  # Hi-Speed LAN connection - see 1MA208
