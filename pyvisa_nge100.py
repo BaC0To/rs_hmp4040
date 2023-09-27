@@ -30,6 +30,9 @@ class PowerSupply:
 
     def __init__(self, brand:str) -> None:
         self.vendor_id = self.supported_brands.get(brand.upper())
+
+        self.channel = None
+
         self.channel_list = [1, 2]
         instr_index = None
         instr_list_available = []
@@ -50,7 +53,7 @@ class PowerSupply:
     def __del__(self):
         logging.shutdown()
         #os.remove(tmp_log)
-        print('Destructor called')
+        print('Destructor called but temp log file not deleted')
 
 
     def identification_psu(self):
@@ -84,10 +87,12 @@ class PowerSupply:
             output_status = int(self.nge100.query('OUTPut:STATe?'))
             current_measured = float(self.nge100.query('MEASure:CURRent?'))
             volt_prot = float(self.nge100.query('VOLTage:PROTection?'))
-            volt_prot_active = self.nge100.query('VOLTage:PROTection:MODE?').rstrip('\r\n')
+            volt_prot_active = self.nge100.query('VOLTage:PROTection:MODE?').strip()
+            volt_prot_value = float(self.nge100.query('VOLT:PROT:LEV?').strip())
             logging.info(f"Channel {channel}: Volt: {voltage}[V], Curr: {current}[A] "
                          f"Output: {output_status}, Meas_Curr: {current_measured}[A] "
-                         f"OVP_Type: {volt_prot_active}, OVP_Value: {volt_prot}"                      
+                         f"OVP_Type: {volt_prot_active}, OVP_State: {volt_prot} "
+                         f"OVP_Value: {volt_prot_value} [V]"               
                          )
 
 
@@ -115,23 +120,27 @@ class PowerSupply:
         result_voltage = result_voltage.replace('"', '')
         result_current = result_current.replace('"', '')
         result_current = result_current.strip()
-        print(result_voltage)
-        print(result_current)
-        if float(result_voltage) == self.voltage or result_current != self.current:
-            logger.error(f'Requested Parameters: ')
+        if float(result_voltage) != float(self.voltage) or float(result_current) != float(self.current):
+            logger.error('Requested channel parameters not accepted by PSU unit!')
         return self.result
 
-    def set_overvoltage_protection(self, state:bool, type:str, value:float):
+    def set_overvoltage_protection(self, state:bool, mode:str, value:float):
         self.state = state
-        self.type = type
+        self.mode = mode
         self.value = value
-
-        setting = "ON" if self.state else "OFF"
+        setting = "1" if self.state else "0"
         self.nge100.write(f'VOLT:PROT {setting}')
-        self.nge100.write(f'VOLT:PROT:MODE {self.type}')
+        result_state = self.nge100.query('VOLT:PROT?').strip()
+
+        self.nge100.write(f'VOLT:PROT:MODE {self.mode}')
+        result_mode = self.nge100.query('VOLT:PROT:MODE?').strip()
+
         self.nge100.write(f'VOLT:PROT:LEV {self.value}')
+        result_value = self.nge100.query('VOLT:PROT:LEV?').strip()
+        if int(result_state) != int(setting) or result_mode != self.mode or float(result_value) != float(self.value):
+            logger.error('Requested OVP parameters not accepted by PSU unit!')
         
-    def set_fuse(self, state:bool, trip_value:int):
+    def set_fuse(self, state:bool, trip_value:float):
         self.state = state
         self.trip_value = trip_value
         setting = "ON" if self.state else "OFF"
@@ -148,3 +157,6 @@ class PowerSupply:
         self.state = state
         setting = "ON" if self.state else "OFF"
         self.nge100.write(f'OUTPut:GENeral {setting}')
+
+    def set_local_mode(self):
+        self.nge100.write('SYSTem:LOCal')

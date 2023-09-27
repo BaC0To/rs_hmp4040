@@ -1,0 +1,22 @@
+{
+	"channel1": [
+		{
+			"voltage": 24,
+			"current": 0.3,
+			"state": "OFF",
+			"over_voltage_value": 25,
+			"over_voltage_type": "PROTected",
+			"fuse_trip_time": 0.25
+		}
+	],
+	"channel2": [
+		{
+			"voltage": 12,
+			"current": 0.35,
+			"state": "ON",
+			"over_voltage_value": 25,
+			"over_voltage_type": "PROTected",
+			"fuse_trip_time": 0.25
+		}
+	]
+}
