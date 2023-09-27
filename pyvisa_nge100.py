@@ -1,96 +1,150 @@
 
-import time
+import logging
+import os
 import pyvisa
+import sys
+from tempfile import gettempdir
 
 
-# install NI-VISA
-#create a resource manager
 VENDOR_ID = '0x0AAD' # Rohde & Schwarz VID_0x0AAD
-rm = pyvisa.ResourceManager()
-instr_list = rm.list_resources()
+LOG_FILE = 'psu.log'
 
-#print(f'The resource list contains : {instr_list}')
+tmp_log = os.path.join(gettempdir(),LOG_FILE)
 
-_index = None
-counter = 0
+logging.basicConfig(filename=tmp_log,format='[ %(asctime)s ][ %(levelname)s ]:  %(message)s',
+                     datefmt='%m/%d/%Y %I:%M:%S %p',level=logging.INFO
+                    )
 
-for item in instr_list:
-    if item.find(VENDOR_ID) != -1:
-        _index = counter
-    counter += 1
+logger = logging.getLogger(__name__)
+logger.setLevel('INFO')
 
-for i, instrument in enumerate(instr_list):
-    _index = i if instrument.find(VENDOR_ID) != -1 else _index
+class PowerSupply:
 
 
-resource_string_1 = instr_list[_index]
+    idn = None
+    vendor_id: str
+    supported_brands: dict = {
+        'ROHDE&SCHWARZ': "0x0AAD"
+    }
 
 
-with rm.open_resource(resource_string_1) as power_supply_unit:
+    def __init__(self, brand:str) -> None:
+        self.vendor_id = self.supported_brands.get(brand.upper())
+        self.channel_list = [1, 2]
+        instr_index = None
+        instr_list_available = []
+        rm = pyvisa.ResourceManager()
+        instr_list = rm.list_resources()
+        for i, instrument in enumerate(instr_list):
+            if instrument.find(VENDOR_ID) != -1 :
+                instr_list_available.append(instrument)
+                instr_index = i
+
+        try:
+            self.nge100 = rm.open_resource(instr_list_available[instr_index])
+            #self.nge100.write('*RST')
+        except TypeError :
+            logger.error('No available R&S brand PSU device found!')
+            sys.exit(-1)
+
+    def __del__(self):
+        logging.shutdown()
+        #os.remove(tmp_log)
+        print('Destructor called')
 
 
-    # read instrument *IDN?
-    idn = power_supply_unit.query('*IDN?')
-    manufacturer, device_type, part_sn_number, fw_ver = idn.split(',')
-    print(
-        "--- PSU details ---\n"
-        f"Manufacturer: {manufacturer}\n"
-        f"Device_Type: {device_type}\n"
-        f"Part_ Number/Serial: {part_sn_number}\n"
-        f"FW_Ver: {fw_ver.strip()}"
-    )
+    def identification_psu(self):
+        if self.idn is None:
+            idn = self.nge100.query('*IDN?')
+            self.idn = idn
+            logging.info(idn)
+        return self.idn
 
-    # Reset , outputs revert to OFF
-    power_supply_unit.write('*RST')
+    def get_state_psu(self):
+        """
+        This function returns all the settings of the PSU per channel
+        
+        Args:
+            None.
+                    
+        Returns:
+            {
+                'voltage': float , set voltage,
+                'current': float , set urrent,
+                'status': int , status,
+                'current_measured': float , measured real current,
+                'volt_prot': float , voltage protection value,
+                'volt_prot_active': str , voltage protection mode
+            }
+        """
+        for channel in self.channel_list:
+            self.nge100.write(f'INSTrument:NSELect {channel}')
+            voltage = float(self.nge100.query('SOURce:VOLTage?'))
+            current = float(self.nge100.query('SOURce:CURRent?'))
+            output_status = int(self.nge100.query('OUTPut:STATe?'))
+            current_measured = float(self.nge100.query('MEASure:CURRent?'))
+            volt_prot = float(self.nge100.query('VOLTage:PROTection?'))
+            volt_prot_active = self.nge100.query('VOLTage:PROTection:MODE?').rstrip('\r\n')
+            logging.info(f"Channel {channel}: Volt: {voltage}[V], Curr: {current}[A] "
+                         f"Output: {output_status}, Meas_Curr: {current_measured}[A] "
+                         f"OVP_Type: {volt_prot_active}, OVP_Value: {volt_prot}"                      
+                         )
+
+
+
+    def reset_psu(self):
+        self.nge100.write('*RST')
+        self.nge100.write('SYSTem:LOCal')
     
-    # select channel NR 1|2
-    channel = 1
-    power_supply_unit.write(f'INST OUT{channel}')
-
-    # select voltage,current
-    voltage = 24 # [V]
-    current = 0.2 # [A]
-    power_supply_unit.write(f'APPLY "{voltage},{current}"')
-
-    # set OVP + 10%
-    power_supply_unit.write(f'VOLT:PROT:MODE PROT')
-    ovp_value = voltage + voltage*0.1
-    power_supply_unit.write(f'VOLT:PROT:LEV {ovp_value}')
-   
-    fuse_delay = 0.05 # [sec.]
-
-    # Defines a fuse delay
-    power_supply_unit.write(f'FUSE:DEL {fuse_delay}')
-    # set fuse on/off
-    fuse = True
-    if fuse:
-        power_supply_unit.write('FUSE ON')
-    else:
-        power_supply_unit.write('FUSE OFF')
-
-    output_state = True
-
-    if output_state:
-        power_supply_unit.write('OUTP ON')
-    else:
-        power_supply_unit.write('OUTP OFF')
-
-    time.sleep(3)
-
-    output_state = False
-
-    if output_state:
-        power_supply_unit.write('OUTP ON')
-    else:
-        power_supply_unit.write('OUTP OFF')
-
+    def select_channel(self, channel:int):
+        self.channel = channel
+        self.nge100.write(f'INSTrument:NSELect {channel}')
+        result = self.nge100.query('INSTrument:NSELect?').rstrip('\n')
+        self.result = result
+        if int(self.result) != int(self.channel):
+            logger.error(f'Requested Channel: {result} not selected!')
+        return self.result
     
-    general_output_state = False
+    def set_channel_params(self, voltage:float, current:float):
+        self.voltage = voltage
+        self.current = current
+        self.nge100.write(f'APPLY "{self.voltage},{self.current}"')
+        result = self.nge100.query('APPLY?').rstrip('\n')
+        self.result = result
+        result_voltage, result_current = result.split(',')
+        result_voltage = result_voltage.replace('"', '')
+        result_current = result_current.replace('"', '')
+        result_current = result_current.strip()
+        print(result_voltage)
+        print(result_current)
+        if float(result_voltage) == self.voltage or result_current != self.current:
+            logger.error(f'Requested Parameters: ')
+        return self.result
 
-    time.sleep(0.2)
-    state = "ON" if general_output_state else "OFF"
-    power_supply_unit.write(f'OUTPut:GENeral {state}')
+    def set_overvoltage_protection(self, state:bool, type:str, value:float):
+        self.state = state
+        self.type = type
+        self.value = value
 
+        setting = "ON" if self.state else "OFF"
+        self.nge100.write(f'VOLT:PROT {setting}')
+        self.nge100.write(f'VOLT:PROT:MODE {self.type}')
+        self.nge100.write(f'VOLT:PROT:LEV {self.value}')
+        
+    def set_fuse(self, state:bool, trip_value:int):
+        self.state = state
+        self.trip_value = trip_value
+        setting = "ON" if self.state else "OFF"
+        self.nge100.write(f'FUSE {setting}')
+        self.nge100.write(f'FUSE:DEL {self.trip_value}')
 
-    # Return to local
-    power_supply_unit.write(f'SYSTem:LOCal')
+    def enable_channel(self, state:bool, channel:int):
+        self.state = state
+        self.channel = channel
+        setting = "ON" if self.state else "OFF"
+        self.nge100.write(f'OUTP {setting}')
+
+    def enable_output(self, state:bool):
+        self.state = state
+        setting = "ON" if self.state else "OFF"
+        self.nge100.write(f'OUTPut:GENeral {setting}')
