@@ -9,34 +9,38 @@ Todo:
     * ????
     * ????
 """
+import time
 from pyvisa_nge100 import PowerSupply
 from read_json_settings import read_nge100_config_from_json
+
 
 JSON_FILENAME = 'nge100_settings.json'
 
 psu_settings_json = read_nge100_config_from_json(JSON_FILENAME)
-
 psu1 = PowerSupply('ROHDE&SCHWARZ','VCP')
 psu1.identification_psu()
-psu1.reset_psu()
+#psu1.reset_psu()
 for idx, settings in enumerate(psu_settings_json):
-    if idx != 0:
+    if settings != 'common':
         #set channel settings
-        psu1.select_channel(idx)
-        psu1.set_channel_overvoltage_protection(settings.get('over_voltage_value'),
-                                                settings.get('over_voltage_mode'),
-                                                settings.get('over_voltage_state')
-                                                )
-        psu1.set_channel_fuse(settings.get('fuse_trip_time'),
-                                settings.get('fuse_state')
+        psu1.select_channel(settings)
+        psu1.set_channel_fuse(psu_settings_json.get(settings).get('fuse_trip_time'),
+                            psu_settings_json.get(settings).get('fuse_state')
+                            )
+        psu1.set_channel_ovp(psu_settings_json.get(settings).get('over_voltage_value'),
+                            psu_settings_json.get(settings).get('over_voltage_mode'),
+                            psu_settings_json.get(settings).get('over_voltage_state')
+                            )
+        psu1.set_channel_params(psu_settings_json.get(settings).get('voltage'),
+                                psu_settings_json.get(settings).get('current'),
+                                psu_settings_json.get(settings).get('state')
                                 )
-        psu1.set_channel_params(settings.get('voltage'),
-                                settings.get('current'), settings.get('state')
-                                )
+        psu1.get_state_channel(settings)
     else:
-        #set common settings
-        psu1.enable_master_output(settings.get('state'))
-psu1.get_state_psu()
+        #set common settings general output state
+        psu1.enable_master_output(psu_settings_json.get(settings).get('state'))
+
+psu1.error_checks()
 psu1.set_local_remote_mode('LOCAL')
-print(psu1.error_checks())
-psu1.reset_psu()
+#time.sleep(3)
+#psu1.reset_psu()
