@@ -1,4 +1,3 @@
-
 import logging
 import os
 import sys
@@ -27,7 +26,6 @@ class PowerSupply:
         'ROHDE&SCHWARZ': "0x0AAD"
     }
 
-
     def __init__(self, brand:str, connection:str) -> None:
         self.vendor_id = self.supported_brands.get(brand.upper())
         self.channel = None
@@ -40,6 +38,7 @@ class PowerSupply:
         self.mode = None
         self.value = None
         instr_index = None
+        self.error = None
         rm = pyvisa.ResourceManager()
         instr_list_available = []
 
@@ -83,6 +82,16 @@ class PowerSupply:
         #os.remove(tmp_log)
 
     def identification_psu(self):
+        """
+        This function sends IDN command and r
+        eturns the instrument identification.
+
+        Args:
+            None.
+
+        Returns:
+            self.idn (str): instrument identification.
+        """
         if self.idn is None:
             idn = self.nge100.query('*IDN?').strip()
             self.idn = idn
@@ -115,28 +124,64 @@ class PowerSupply:
             volt_prot = float(self.nge100.query('VOLTage:PROTection?'))
             volt_prot_active = self.nge100.query('VOLTage:PROTection:MODE?').strip()
             volt_prot_value = float(self.nge100.query('VOLT:PROT:LEV?').strip())
-            logging.info(f"Channel {channel}: Volt: {voltage}[V], Curr: {current}[A] "
-                         f"Output: {output_status}, Meas_Curr: {current_measured}[A] "
-                         f"OVP_Type: {volt_prot_active}, OVP_State: {volt_prot} "
-                         f"OVP_Value: {volt_prot_value} [V]"
+            # logging.info(f"Channel {channel}: Volt: {voltage}[V], Curr: {current}[A] "
+            #              f"Output: {output_status}, Meas_Curr: {current_measured}[A] "
+            #              f"OVP_Type: {volt_prot_active}, OVP_State: {volt_prot} "
+            #              f"OVP_Value: {volt_prot_value} [V]"
+            #              )
+            logging.info("Channel %s: Volt: %s [V], Curr: %s [A] "
+                         "Output: %s, Meas_Curr: %s [A] "
+                         "OVP_Type: %s, OVP_State: %s "
+                         "OVP_Value: %s [V]", channel, voltage, current, output_status,
+                         current_measured, volt_prot_active, volt_prot, volt_prot_value
                          )
 
 
 
     def reset_psu(self):
+        """
+        This function resets the PSU
+
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
         self.nge100.write('*RST')
         self.nge100.write('SYSTem:LOCal')
 
     def select_channel(self, channel:int):
+        """
+        This function selects the PSU physical channel
+
+        Args:
+            channel (int): current selection
+
+        Returns:
+            None.
+        """
         self.channel = channel
         self.nge100.write(f'INSTrument:NSELect {channel}')
         result = self.nge100.query('INSTrument:NSELect?').strip()
         self.result = result
         if int(self.result) != int(self.channel):
-            logger.error(f'Requested channel: {result} not selected!')
+            logger.error('Requested channel: %s not selected!', result)
         return self.result
 
     def set_channel_params(self, voltage:float, current:float, state:str):
+        """
+        This function sets the selected PSU channel's settings : voltage
+        current and output state
+
+        Args:
+            voltage (float): to set voltage [V]
+            current (float): to set current [A]
+            state (str): ON/OFF to activate or deactivate this option
+
+        Returns:
+            self.result
+        """
         self.state = state
         self.voltage = voltage
         self.current = current
@@ -157,6 +202,15 @@ class PowerSupply:
         return self.result
 
     def enable_master_output(self, state:str):
+        """
+        This function sets the master output ON/OFF
+
+        Args:
+        state (str): ['ON'|'OFF'] to activate or deactivate this option
+
+        Returns:
+        None.
+        """
         self.state = state
         self.nge100.write(f'OUTPut:GENeral {self.state}')
         read_output_master_state_bool = self.nge100.query('OUTPut:GENeral?').strip()
@@ -165,6 +219,19 @@ class PowerSupply:
             logger.error('Requested master output parameter not accepted by PSU!')
 
     def set_channel_overvoltage_protection(self, value:float, mode:str, state:str):
+        """
+        This function sets the channel ovp protection
+
+        Args:
+            value (float): The selected threshold value in [V]
+            mode (str):MEASured --> The OVP switches off if the measured value exceeds.
+                        PROTected If the adjusted threshold is exceeded the output;
+                        additionally the measured value is monitored.
+            state (str): ON/OFF to activate or deactivate this option
+
+        Returns:
+            None.
+        """
         self.value = value
         self.mode = mode
         self.state = state
@@ -181,6 +248,16 @@ class PowerSupply:
 
 
     def set_channel_fuse(self, value:float, state:str):
+        """
+        This function sets the channel ovc fuse current protection
+
+        Args:
+            value (float): The selected time in secs after the fuse is tripped
+            state (str): ON/OFF to activate or deactivate this option
+
+        Returns:
+            None.
+        """
         self.value = value
         self.state = state
         self.nge100.write(f'FUSE {self.state}')
@@ -192,8 +269,48 @@ class PowerSupply:
             logger.error('Requested FUSE channel parameters not accepted by PSU unit!')
 
     def set_local_remote_mode(self, mode:str):
+        """
+        This function sets the system to remote / front panel control or
+        a more secure rwlock where the unit unlocks only by a command 'LOCAL'
+        or by a RST
+
+        Args:
+            mode (str): The selected mode [cLOCAL'|'REMOTE'|'RWLOCK']
+
+        Returns:
+            None.
+        """
         self.mode = mode
-        if self.mode == 'LOCAL':
-            self.nge100.write('SYSTem:LOCal')
-        else:
+        if self.mode == 'REMOTE':
             self.nge100.write('SYSTem:REMote')
+        elif self.mode == 'RWLOCK':
+            self.nge100.write('SYSTem:RWLock')
+        else:
+            self.nge100.write('SYSTem:LOCal')
+
+    def error_checks(self):
+        """
+        This is an errock check function
+
+        Args:
+            None.
+
+        Returns:
+            my_errror (list): A list of errors
+        """
+        my_error = []
+        error_list = self.nge100.query('SYSTem:ERRor?').split(',')
+        error = error_list[0]
+        if int(error) == 0:
+            logging.info('No error!')
+        else:
+            while int(error)!=0:
+                logger.error("error #: %s", error_list[0])
+                logger.error("error Description: %s", error_list[1])
+                my_error.append(error_list[0])
+                my_error.append(error_list[1])
+                error_list = self.nge100.query("SYST:ERR?").split(',')
+                error = error_list[0]
+                my_error = list(my_error)
+                self.error = my_error
+        return my_error

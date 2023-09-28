@@ -35,8 +35,6 @@ def read_nge100_config_from_json(filename:str):
                 #channel N data -->
                 for ch_settings in json_data[psu_channel]:
                     psu_settings_list.append(ch_settings)
-                    # for key in ch_settings:
-                    #     print(f'key: {key} , value: {ch_settings[key]}')
         return psu_settings_list
     except IOError as exc:
         raise ValueError('File not found!') from exc

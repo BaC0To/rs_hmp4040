@@ -11,7 +11,7 @@
 			"state": "ON",
 			"over_voltage_state": "ON",
 			"over_voltage_value": 27.6,
-			"over_voltage_mode": "MEASured",
+			"over_voltage_mode": "PROTected",
 			"fuse_state": "ON",
 			"fuse_trip_time": 0.2
 		}
@@ -23,7 +23,7 @@
 			"state": "ON",
 			"over_voltage_state": "ON",
 			"over_voltage_value": 27.6,
-			"over_voltage_mode": "MEASured",
+			"over_voltage_mode": "PROTected",
 			"fuse_state": "OFF",
 			"fuse_trip_time": 0.2
 		}
