@@ -5,8 +5,6 @@ from tempfile import gettempdir
 import re
 import pyvisa
 import serial.tools.list_ports
-import time
-
 
 LOG_FILE = 'psu.log'
 
@@ -51,7 +49,7 @@ class PowerSupply:
                     values = self.supported_brands.get(brand.upper())
                     #if comport connected device vendor equals to supported
                     if values.upper() == hex_vid.upper():
-                    # get COM port by searching in the description
+                    # get COM port by reverse earching in the description for data COMx
                         com_port = port.description[port.description.rfind('(')+1:(len(port.description)-1)]
                         instr_list_available.append(com_port)
                     else:
@@ -126,14 +124,19 @@ class PowerSupply:
         current = float(self.nge100.query('SOURce:CURRent?'))
         output_status = int(self.nge100.query('OUTPut:STATe?'))
         current_measured = float(self.nge100.query('MEASure:CURRent?'))
-        volt_prot = float(self.nge100.query('VOLTage:PROTection?'))
-        volt_prot_active = self.nge100.query('VOLTage:PROTection:MODE?').strip()
+        volt_prot_state = '1' if float(self.nge100.query('VOLTage:PROTection?'))!= 0 else '0'
+        volt_prot_mode = self.nge100.query('VOLTage:PROTection:MODE?').strip()
         volt_prot_value = float(self.nge100.query('VOLT:PROT:LEV?').strip())
-        logging.info("Channel %s: Volt: %s [V], Curr: %s [A], "
-                        "Output: %s, Meas_Curr: %s [A], "
-                        "OVP_Type: %s, OVP_State: %s ,"
-                        "OVP_Value: %s [V]", channel_number, voltage, current, output_status,
-                        current_measured, volt_prot_active, volt_prot, volt_prot_value
+        ch_fuse_state = self.nge100.query('FUSE?').strip()
+        ch_fuse_value = self.nge100.query('FUSE:DEL?').strip()
+        logging.info("Channel %s: Volt: %s [V],Curr: %s [A],"
+                        "Out_Stat: %s,Meas_Curr: %s [A],"
+                        "OVP_Stat: %s,OVP_Type: %s,"
+                        "OVP_Val: %s [V],"
+                        "FUSE_Stat: %s,FUSE_Val: %s [msec]",
+                        channel_number, voltage, current, output_status,
+                        current_measured, volt_prot_state, volt_prot_mode.upper(), volt_prot_value,
+                        ch_fuse_state, ch_fuse_value
                         )
 
 
@@ -155,20 +158,20 @@ class PowerSupply:
         This function selects the PSU physical channel
 
         Args:
-            channel (string): current selection
+            channel (str): current selection
 
         Returns:
-            None.
+            result (str): selected channel
         """
         self.channel = channel
         temp = re.findall(r'\d+',  self.channel)
         res = list(map(int, temp))
         channel_number = int(res[0])
         self.nge100.write(f'INSTrument:NSELect {channel_number}')
-        result = self.nge100.query('INSTrument:NSELect?').strip()
+        result = int(self.nge100.query('INSTrument:NSELect?').strip())
         self.result = result
-        if int(self.result) != int(int(res[0])):
-            logger.error('Requested channel: %s not selected!', result)
+        if self.result != channel_number:
+            logger.error('Requested channel: %s not selected!', channel_number)
         return self.result
 
     def set_channel_params(self, voltage:float, current:float, state:str):
@@ -187,22 +190,20 @@ class PowerSupply:
         self.state = state
         self.voltage = voltage
         self.current = current
-        self.nge100.write(f'APPL {voltage},{current}')
-        result = self.nge100.query('APPL?').strip()
-        self.result = result
-        result_voltage, result_current = result.split(',')
-        result_voltage = result_voltage.replace('"', '')
-        result_current = result_current.replace('"', '')
-        result_current = result_current.strip()
+        self.nge100.write(f'VOLT {voltage}')
+        result_voltage = float(self.nge100.query('VOLT?').strip())
+        self.nge100.write(f'CURR {current}')
+        result_current = float(self.nge100.query('CURR?').strip())
         self.nge100.write(f'OUTPut:SELect {self.state}')
         read_output_state_bool = self.nge100.query('OUTP:SEL?').strip()
         read_output_state_str = 'ON' if read_output_state_bool == '1' else 'OFF'
-        if (float(result_voltage) != float(voltage) or
-                float(result_current) != float(current) or
-                read_output_state_str != self.state):
+        if (result_voltage != voltage or result_current != current or
+            read_output_state_str != self.state):
             logger.error('Requested channel parameters %s [V], %s [A] not accepted by PSU!',
-                         self.voltage, self.current
+                         voltage, current
                          )
+        result = str(result_voltage)+", "+str(result_current)
+        self.result = result
         return self.result
 
     def enable_master_output(self, state:str):
@@ -220,9 +221,9 @@ class PowerSupply:
         read_output_master_state_bool = self.nge100.query('OUTPut:GENeral?').strip()
         read_output_state_str = 'ON' if read_output_master_state_bool == '1' else 'OFF'
         if read_output_state_str != self.state:
-            logger.error('Requested master output parameter not accepted by PSU!')
+            logger.error('Requested master output command not accepted by PSU!')
 
-    def set_channel_ovp(self, value:float, mode:str, state:str):
+    def set_channel_ovp(self, value:float, mode:str):
         """
         This function sets the channel ovp protection
 
@@ -234,46 +235,49 @@ class PowerSupply:
             state (str): ON/OFF to activate or deactivate this option
 
         Returns:
-            None.
+            result (str): Actual settings for OVP of selected channel
         """
         self.value = value
         self.mode = mode
-        self.state = state
-        self.nge100.write(f'VOLT:PROT {self.value}')
-        result_state_str = self.nge100.query('VOLT:PROT?').strip()
-        #result_state_str = 'ON' if result_state_bool == '1' else 'OFF'
-        #if result_state_str == 'ON':
-        self.nge100.write(f'VOLT:PROT:MODE {self.mode}')
-        result_mode = self.nge100.query('VOLT:PROT:MODE?').strip()
-        # self.nge100.write(f'VOLT:PROT:LEV {self.value}')
-        # result_value = self.nge100.query('VOLT:PROT:LEV?').strip()
-        if (float(result_state_str) != float(self.value) or result_mode != self.mode):
-            logger.error('Requested OVP channel parameters not accepted by PSU unit!')
+        self.nge100.write(f'VOLT:PROT:LEV {value}')
+        result_value = float(self.nge100.query('VOLT:PROT:LEV?'))
+        #result_state_str = self.nge100.query('VOLT:PROT?').strip()
+        self.nge100.write(f'VOLT:PROT:MODE {mode}')
+        result_mode = self.nge100.query('VOLT:PROT:MODE?').strip().upper()
+        if (result_value != value or result_mode != mode.upper()):
+            logger.error("Requested OVP channel parameters %s [V], Mode: %s "
+                        "not accepted by PSU unit!",value, mode)
+        result = str(result_value) + ", "+ result_mode
+        self.result = result
+        return self.result
 
-
-    def set_channel_fuse(self, value:float, state:str):
+    def set_channel_fuse(self, value:int, state:str):
         """
         This function sets the channel ovc fuse current protection
 
         Args:
-            value (float): The selected time in secs after the fuse is tripped
+            value (int): The selected time in msec after the fuse is tripped
             state (str): ON/OFF to activate or deactivate this option
 
         Returns:
-            None.
+            result (str). Actual set parameters for fuse settings per channel
         """
         self.value = value
         self.state = state
-        self.nge100.write(f'FUSE {self.state}')
-        time.sleep(0.01)
-        result_state_bool = self.nge100.query('FUSE?').strip()
-        result_state_str = 'ON' if result_state_bool == '1' else 'OFF'
-        if result_state_str == 'ON':
-            self.nge100.write(f'FUSE:DEL {self.value}')
-            time.sleep(0.01)
-            result_value = self.nge100.query('FUSE:DEL?').strip()
-            if (result_state_str != self.state or float(result_value) != float(self.value)):
-                logger.error('Requested FUSE channel parameters not accepted by PSU unit!')
+        if self.state == 'ON':
+            self.nge100.write(f'FUSE:DEL {value}')
+            result_value = int(self.nge100.query('FUSE:DEL?').strip())
+            self.nge100.write(f'FUSE {state}')
+            result_state_str = self.nge100.query('FUSE?').strip()
+            result_state= 'ON' if result_state_str == '1' else 'OFF'
+            if (result_value != value or result_state != state):
+                logger.error("Requested FUSE channel parameters %s [sec] "
+                            "not accepted by PSU unit!", value)
+            result = result_state + ", " + str(result_value)
+        else:
+            result = state
+        self.result = result
+        return self.result
 
     def set_local_remote_mode(self, mode:str):
         """
@@ -303,7 +307,7 @@ class PowerSupply:
             None.
 
         Returns:
-            my_errror (list): A list of errors
+            my_errror (list): A list of errors if present
         """
         my_error = []
         error_list = self.nge100.query('SYSTem:ERRor?').split(',')
