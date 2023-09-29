@@ -17,6 +17,7 @@ logging.basicConfig(filename=tmp_log,format='[ %(asctime)s ][ %(levelname)s ]:  
 logger = logging.getLogger(__name__)
 logger.setLevel('INFO')
 
+
 class PowerSupply:
 
 

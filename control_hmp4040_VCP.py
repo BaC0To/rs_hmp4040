@@ -17,7 +17,7 @@ JSON_FILENAME = 'nge100_settings.json'
 psu_settings_json = read_nge100_config_from_json(JSON_FILENAME)
 psu1 = PowerSupply('ROHDE&SCHWARZ','VCP')
 psu1.identification_psu()
-
+#psu1.reset_psu()
 for idx, settings in enumerate(psu_settings_json):
     if settings != 'common':
         #set channel settings
